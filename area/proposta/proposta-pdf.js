@@ -56,10 +56,15 @@ export const PADRAO = {
     'Análise do laudo do perito judicial e manifestação técnica sobre ele, quando for produzido.',
   ],
   valorAVista: 1800,
-  parcelas: 12,
-  valorParcela: 180,
-  parceladoObs: 'total',
 };
+
+// Regra comercial (Clemilson, 13/10/2026): 12 parcelas, cada uma = 1/10 do valor à vista (total parcelado = 120%).
+export function calcularInvestimento(valorAVista) {
+  const aVista = Math.round(valorAVista * 100) / 100;
+  const parcela = Math.round(aVista * 10) / 100;          // 1/10 do valor, em centavos
+  const total = Math.round(parcela * 12 * 100) / 100;
+  return { aVista, parcelas: 12, parcela, total };
+}
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 export const brl = (n) => 'R$ ' + Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -88,12 +93,24 @@ export function gerarProposta(JsPDF, tiras, dados) {
       y += h;
     });
   };
-  fundo();
+  // Rodapé: a imagem do papel traz "CRM 5133-MA"; cobrimos só essa linha e a reescrevemos com o RQE,
+  // no mesmo centro, linha de base, altura de maiúsculas e cor medidos na imagem (px→pt: 0,23681 em x; 0,24096 em y).
+  const rodape = () => {
+    const yTira = 3111 * PAGE.h / totalPx;                 // topo da última tira
+    doc.setFillColor(255, 255, 255);
+    doc.rect(250, yTira + 226 * 0.24096, 113, 50 * 0.24096, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(12.55); doc.setTextColor(14, 45, 57);
+    doc.setCharSpace(-0.28);
+    doc.text('CRM 5133-MA · RQE 2360', 1295.5 * 0.23681, yTira + 269.5 * 0.24096, { align: 'center', baseline: 'alphabetic' });
+    doc.setCharSpace(0);
+  };
+  const papel = () => { fundo(); rodape(); };
+  papel();
 
   let y = 0; // "topo" da próxima linha, como medido no modelo
   const font = (style, size) => { doc.setFont('times', style); doc.setFontSize(size); doc.setTextColor(0, 0, 0); };
   const txt = (s, x, top, size) => doc.text(s, x, top + size * ASCENT - 1.3, { baseline: 'alphabetic' });
-  const novaPagina = () => { doc.addPage(); fundo(); y = TOP_P2; };
+  const novaPagina = () => { doc.addPage(); papel(); y = TOP_P2; };
   const garante = (altura) => { if (y + altura > BOTTOM) novaPagina(); };
   // quebra de linha gulosa; 'recuo' reduz só a largura da primeira linha (rótulo em negrito)
   const wrap = (s, w, style, size, recuo = 0) => {
@@ -117,11 +134,11 @@ export function gerarProposta(JsPDF, tiras, dados) {
   for (const [rotulo, valor] of meta) {
     font('bold', BODY); txt(rotulo, L, my, BODY);
     const wx = doc.getTextWidth(rotulo.trimEnd()) + (doc.getTextWidth('x x') - doc.getTextWidth('xx')); // rótulo + 1 espaço em negrito
-    font('normal', BODY); txt(valor, L + wx, my, BODY);
-    my += 14.6;
+    // valor longo quebra de linha; as linhas seguintes voltam à margem esquerda, como no modelo (HTML)
+    wrap(valor, R - L, 'normal', BODY, wx).forEach((l, i) => { font('normal', BODY); txt(l, i === 0 ? L + wx : L, my + i * 14.65, BODY); });
+    my += 14.65 * wrap(valor, R - L, 'normal', BODY, wx).length;
   }
-  y = 255;
-
+  y = my - 14.65 + 29.7; // o modelo deixa ~30 pt entre a última linha de identificação e o título 1
   // ---- blocos
   let n = 0;
   const secao = (titulo, folga) => {
@@ -175,8 +192,9 @@ export function gerarProposta(JsPDF, tiras, dados) {
   doc.setDrawColor(...BOX_BORDER); doc.setLineWidth(0.5);
   doc.setFillColor(...BOX_FILL);
   doc.rect(bx, by, bw, bh, 'FD'); doc.rect(gx, by, 526.6 - gx + 0.4, bh, 'FD');
-  const colA = ['À VISTA · PIX', brl(v.valorAVista), 'pagamento único via PIX'];
-  const colB = ['PARCELADO · CARTÃO DE CRÉDITO', `${v.parcelas}x de ${brl(v.valorParcela)}`, v.parceladoObs];
+  const inv = calcularInvestimento(v.valorAVista);
+  const colA = ['À VISTA · PIX', brl(inv.aVista), 'pagamento único via PIX'];
+  const colB = ['PARCELADO · CARTÃO DE CRÉDITO', `${inv.parcelas}x de ${brl(inv.parcela)}`, `total ${brl(inv.total)}`];
   [[colA, 66.0], [colB, 300.8]].forEach(([c, x]) => {
     font('bold', 12); txt(c[0], x, by + 9.3, 12); txt(c[1], x, by + 25.1, 12);
     font('normal', 12); txt(c[2], x, by + 40.8, 12);
